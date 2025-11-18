@@ -1,5 +1,6 @@
-import { type Product, type InsertProduct, type Movement, type InsertMovement } from "@shared/schema";
-import { randomUUID } from "crypto";
+import { type Product, type InsertProduct, type Movement, type InsertMovement, products, movements } from "@shared/schema";
+import { db } from "./db";
+import { eq, lte, desc, gte, and, sql } from "drizzle-orm";
 
 export interface IStorage {
   getProducts(): Promise<Product[]>;
@@ -21,76 +22,47 @@ export interface IStorage {
   }>;
 }
 
-export class MemStorage implements IStorage {
-  private products: Map<string, Product>;
-  private movements: Map<string, Movement>;
-
-  constructor() {
-    this.products = new Map();
-    this.movements = new Map();
-  }
-
+export class PostgresStorage implements IStorage {
   async getProducts(): Promise<Product[]> {
-    return Array.from(this.products.values()).sort((a, b) => 
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    return await db.select().from(products).orderBy(desc(products.createdAt));
   }
 
   async getProduct(id: string): Promise<Product | undefined> {
-    return this.products.get(id);
+    const result = await db.select().from(products).where(eq(products.id, id)).limit(1);
+    return result[0];
   }
 
   async createProduct(insertProduct: InsertProduct): Promise<Product> {
-    const id = randomUUID();
-    const product: Product = {
-      ...insertProduct,
-      description: insertProduct.description || null,
-      id,
-      createdAt: new Date(),
-    };
-    this.products.set(id, product);
-    return product;
+    const result = await db.insert(products).values(insertProduct).returning();
+    return result[0];
   }
 
   async updateProduct(id: string, insertProduct: InsertProduct): Promise<Product | undefined> {
-    const existing = this.products.get(id);
-    if (!existing) {
-      return undefined;
-    }
-
-    const updated: Product = {
-      ...insertProduct,
-      description: insertProduct.description || null,
-      id,
-      createdAt: existing.createdAt,
-    };
-    this.products.set(id, updated);
-    return updated;
+    const result = await db.update(products)
+      .set(insertProduct)
+      .where(eq(products.id, id))
+      .returning();
+    return result[0];
   }
 
   async getProductsInAlert(): Promise<Product[]> {
-    const products = Array.from(this.products.values());
-    return products
-      .filter(product => product.currentStock <= product.minStock)
-      .sort((a, b) => {
-        const percentageA = a.minStock > 0 ? (a.currentStock / a.minStock) : 1;
-        const percentageB = b.minStock > 0 ? (b.currentStock / b.minStock) : 1;
-        return percentageA - percentageB;
-      });
+    return await db.select()
+      .from(products)
+      .where(lte(products.currentStock, products.minStock))
+      .orderBy(sql`(${products.currentStock}::float / NULLIF(${products.minStock}, 0))`);
   }
 
   async getMovements(): Promise<Movement[]> {
-    return Array.from(this.movements.values()).sort((a, b) =>
-      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+    return await db.select().from(movements).orderBy(desc(movements.createdAt));
   }
 
   async getMovement(id: string): Promise<Movement | undefined> {
-    return this.movements.get(id);
+    const result = await db.select().from(movements).where(eq(movements.id, id)).limit(1);
+    return result[0];
   }
 
   async createMovement(insertMovement: InsertMovement): Promise<Movement> {
-    const product = this.products.get(insertMovement.productId);
+    const product = await this.getProduct(insertMovement.productId);
     if (!product) {
       throw new Error("Produto não encontrado");
     }
@@ -104,25 +76,21 @@ export class MemStorage implements IStorage {
       throw new Error("Estoque insuficiente para realizar a saída");
     }
 
-    product.currentStock = newStock;
-    this.products.set(product.id, product);
+    await db.update(products)
+      .set({ currentStock: newStock })
+      .where(eq(products.id, product.id));
 
-    const id = randomUUID();
-    const movement: Movement = {
+    const result = await db.insert(movements).values({
       ...insertMovement,
-      notes: insertMovement.notes || null,
-      id,
       previousStock,
       newStock,
-      createdAt: new Date(),
-    };
-    this.movements.set(id, movement);
-    return movement;
+    }).returning();
+
+    return result[0];
   }
 
   async getRecentMovements(limit: number = 10): Promise<Movement[]> {
-    const allMovements = await this.getMovements();
-    return allMovements.slice(0, limit);
+    return await db.select().from(movements).orderBy(desc(movements.createdAt)).limit(limit);
   }
 
   async getStats(): Promise<{
@@ -131,25 +99,21 @@ export class MemStorage implements IStorage {
     todayEntries: number;
     todayExits: number;
   }> {
-    const products = Array.from(this.products.values());
-    const movements = Array.from(this.movements.values());
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const todayMovements = movements.filter(m => {
-      const movementDate = new Date(m.createdAt);
-      movementDate.setHours(0, 0, 0, 0);
-      return movementDate.getTime() === today.getTime();
-    });
+    const allProducts = await db.select().from(products);
+    const todayMovements = await db.select()
+      .from(movements)
+      .where(gte(movements.createdAt, today));
 
     return {
-      totalProducts: products.length,
-      productsInAlert: products.filter(p => p.currentStock <= p.minStock).length,
-      todayEntries: todayMovements.filter(m => m.type === "entrada").length,
-      todayExits: todayMovements.filter(m => m.type === "saida").length,
+      totalProducts: allProducts.length,
+      productsInAlert: allProducts.filter((p: Product) => p.currentStock <= p.minStock).length,
+      todayEntries: todayMovements.filter((m: Movement) => m.type === "entrada").length,
+      todayExits: todayMovements.filter((m: Movement) => m.type === "saida").length,
     };
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new PostgresStorage();
