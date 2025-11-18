@@ -327,6 +327,7 @@ function MovementForm({ products, onSubmit, isPending }: MovementFormProps) {
               <FormControl>
                 <Textarea
                   {...field}
+                  value={field.value || ""}
                   placeholder="Detalhes adicionais sobre a movimentação (opcional)"
                   disabled={isPending}
                   data-testid="input-notes"

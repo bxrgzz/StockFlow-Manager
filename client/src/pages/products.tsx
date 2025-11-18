@@ -299,6 +299,7 @@ function ProductForm({ initialData, onSubmit, isPending }: ProductFormProps) {
               <FormControl>
                 <Textarea
                   {...field}
+                  value={field.value || ""}
                   placeholder="Descrição detalhada do produto"
                   disabled={isPending}
                   data-testid="input-description"

@@ -44,6 +44,7 @@ export class MemStorage implements IStorage {
     const id = randomUUID();
     const product: Product = {
       ...insertProduct,
+      description: insertProduct.description || null,
       id,
       createdAt: new Date(),
     };
@@ -59,6 +60,7 @@ export class MemStorage implements IStorage {
 
     const updated: Product = {
       ...insertProduct,
+      description: insertProduct.description || null,
       id,
       createdAt: existing.createdAt,
     };
@@ -108,6 +110,7 @@ export class MemStorage implements IStorage {
     const id = randomUUID();
     const movement: Movement = {
       ...insertMovement,
+      notes: insertMovement.notes || null,
       id,
       previousStock,
       newStock,
